@@ -18,6 +18,7 @@ monitor() {
   # backport packages
   rmadison -a source linux-lts-trusty linux-meta-lts-trusty linux-signed-lts-trusty | grep precise-${POCKET}
   rmadison -a source linux-lts-utopic linux-meta-lts-utopic linux-signed-lts-utopic | grep trusty-${POCKET}
+  rmadison -a source linux-lts-vivid linux-meta-lts-vivid linux-signed-lts-vivid | grep trusty-${POCKET}
 
 }
 
