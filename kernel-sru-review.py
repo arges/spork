@@ -34,23 +34,30 @@ sanity_check
   check diff size < 7MB (WARNING)
   no swp or random binary files
 
-promote_kernel
-  issue sru commands to promote kernel
-  output commands
-
-  copy-proposed-kernel vivid linux
-  copy-proposed-kernel vivid linux-meta
-  wait for uefi binary in unapproved and accept
-  wait for linux/linux-meta to get into proposed
-  copy-proposed-kernel vivid linux-signed
-  wait for linux-signed in new and accept
-  ensure everything is in -proposed within timeout
-
 """
 
 class ReviewSRUKernel:
+
+    package_map = {
+        "precise": {
+            "linux": [ "linux", "linux-meta", "linux-backports-modules-3.2.0" ],
+            "linux-armadaxp" : [ "linux-armadaxp", "linux-armadaxp-meta" ],
+            "linux-lts-trusty" : [ "linux-lts-trusty", "linux-lts-trusty-meta", "linux-lts-trusty-signed" ],
+            "linux-ti-omap4" : [ "linux-ti-omap4", "linux-ti-omap4-meta" ],
+         },
+        "trusty": {
+            "linux": [ "linux", "linux-meta", "linux-signed" ],
+            "linux-keystone" : [ "linux-keystone", "linux-keystone-meta" ],
+            "linux-lts-utopic" : [ "linux-lts-utopic", "linux-lts-utopic-meta", "linux-lts-utopic-signed" ],
+            "linux-lts-vivid" : [ "linux-lts-vivid", "linux-lts-vivid-meta", "linux-lts-vivid-signed" ],
+         },
+         "vivid" : {
+            "linux": [ "linux", "linux-meta", "linux-signed" ],
+         }
+    }
+
     def __init__(self):
-        self.launchpad = Launchpad.login_with("spork", "production")
+        self.launchpad = Launchpad.login_with("spork", "production", version="devel")
         self.ubuntu = self.launchpad.distributions["ubuntu"]
         self.workflow = self.launchpad.projects["kernel-sru-workflow"]
 
@@ -84,14 +91,61 @@ class ReviewSRUKernel:
         output = p2.communicate()[0]
         pydoc.pipepager(output, "view -")
 
+    def status(self, pocket):
+        if pocket != 'proposed' and pocket != 'updates':
+            print "Invalid pocket"
+            exit(1)
+
+        for series in self.package_map:
+            for packageset in self.package_map[series]:
+                packages = ' '.join(self.package_map[series][packageset])
+                cmd = "rmadison -a source %s | grep %s-%s" % ( packages, series, pocket )
+                try:
+                    output = subprocess.check_output([cmd], shell=True)
+                    print output
+                except: pass
+
+    def promote_kernel(self, version, series, name):
+        # Sanity check first
+
+        distroseries = self.ubuntu.getSeries(name_or_version=series)
+
+        subprocess.Popen(["copy-proposed-kernel", series, "linux"])
+        subprocess.Popen(["copy-proposed-kernel", series, "linux-meta"])
+
+        # Wait and approve uefi upload
+	upload = distroseries.getPackageUploads(status="Unapproved",
+            name="linux", version=version, exact_match=True)[0]
+        upload.acceptFromQueue()
+
+        # Wait for linux/linux-meta to land in -proposed
+
+        # Copy in linux-signed
+        subprocess.Popen(["copy-proposed-kernel", series, "linux-signed"])
+
+        # Wait and approve linux-signed new package
+	upload = distroseries.getPackageUploads(status="New",
+            name="linux-signed", version=version, exact_match=True)[0]
+        upload.acceptFromQueue()
+
+        # Check that everything is correct
+
+
+def usage():
+        print("Usage: bug <bugno> <assignee> <status>")
+        print("       review <package> <version> <series>")
+        print("       status <pocket>")
+
+
 if __name__ == "__main__":
 
-    if len(sys.argv) != 5:
-        print("Usage:	%s bug <bugno> <assignee> <status>" % sys.argv[0])
-        print("	%s review <package> <version> <series>" % sys.argv[0])
+    if len(sys.argv) < 2:
+        usage()
         exit(1)
 
     if sys.argv[1] == "bug":
+        if len(sys.argv) != 5:
+            usage()
         BUGNO = sys.argv[2]
         ASSIGNEE = sys.argv[3]
         STATUS = sys.argv[4]
@@ -99,12 +153,20 @@ if __name__ == "__main__":
         r.set_bug_state(BUGNO, ASSIGNEE, STATUS)
         print("%s set to %s and assigned %s" %( BUGNO, ASSIGNEE, STATUS ))
     elif sys.argv[1] == "review":
+        if len(sys.argv) != 5:
+            usage()
         PACKAGE = sys.argv[2]
         VERSION = sys.argv[3]
         SERIES = sys.argv[4]
         r = ReviewSRUKernel()
         url = r.get_diff(PACKAGE, VERSION, SERIES)
         r.display_diff(url)
+    elif sys.argv[1] == "status":
+        if len(sys.argv) != 3:
+            usage()
+        POCKET = sys.argv[2]
+        r = ReviewSRUKernel()
+        r.status(POCKET)
     else:
         print("Invalid command")
 
