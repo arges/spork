@@ -18,7 +18,7 @@ class ReviewSRUKernel:
             "linux-armadaxp" : [ "linux-armadaxp", "linux-meta-armadaxp" ],
             "linux-lts-trusty" : [ "linux-lts-trusty", "linux-meta-lts-trusty",
                                    "linux-signed-lts-trusty" ],
-            "linux-ti-omap4" : [ "linux-ti-omap4", "linux-ti-omap4-meta" ],
+            "linux-ti-omap4" : [ "linux-ti-omap4", "linux-meta-ti-omap4" ],
          },
         "trusty": {
             "linux": [ "linux", "linux-meta", "linux-signed" ],
