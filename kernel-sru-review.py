@@ -5,10 +5,11 @@
 # Copyright (C) 2015 Chris J Arges <chris.j.arges@canonical.com>
 #
 
-import sys
-import subprocess
 from launchpadlib.launchpad import Launchpad
 import pydoc
+import subprocess
+import sys
+import time
 
 class ReviewSRUKernel:
 
@@ -117,19 +118,53 @@ class ReviewSRUKernel:
                     print output
                 except: pass
 
-    def promote_kernel(self, version, series, name):
-        # FIXME: actually finish this...
+    def promote_kernel_set(self, series, package_set):
 
+        # Finish this.
         exit(1)
-        # Sanity check first
+
+        # Check if package_set is valid
+        if package_set not in self.package_map[series]:
+            print("Invalid package set")
+            exit(1)
+
+        # Get variables
         distroseries = self.ubuntu.getSeries(name_or_version=series)
+        packages = self.package_map[series][package_set]
+        print packages
 
-        subprocess.Popen(["copy-proposed-kernel", series, "linux"])
-        subprocess.Popen(["copy-proposed-kernel", series, "linux-meta"])
+        # Copy anything that isn't signed first
+        set_has_signed=False
+        for package in packages:
+            if "signed" not in package:
+                subprocess.Popen(["copy-proposed-kernel", series, package])
+            else:
+                set_has_signed=True
 
-        # Wait and approve uefi upload
-        upload = distroseries.getPackageUploads(status="Unapproved",
-            name="linux", version=version, exact_match=True)[0]
+        # If there were no signed kernel then we are done
+        if not set_has_signed:
+            return
+
+        # Otherwise wait for uefi upload
+        upload=None
+        for i in range(0,5):
+            # Wait some time for UEFI binary to become available
+            time.sleep(10)
+
+            # TODO detect the correct name here
+            upload = distroseries.getPackageUploads(status="Unapproved",
+                name="linux", version=version, exact_match=True)[0]
+            if upload:
+                break
+
+            print("Waiting for UEFI binary...")
+
+        # If upload was never updated, then we need to bail.
+        if upload is None:
+            print("Couldn't locate UEFI binary, please complete manually.")
+            exit(1)
+
+        # Otherwise except the upload.
         upload.acceptFromQueue()
 
         # Wait for linux/linux-meta to land in -proposed
@@ -158,14 +193,14 @@ class ReviewSRUKernel:
 def usage():
         print("Usage: take <bugno>")
         print("       review <package> <version> <series>")
-        print("       promote <package> <version> <series>")
+        print("       promote <package> <series>")
         print("       status <pocket>")
+        exit(1)
 
 if __name__ == "__main__":
 
     if len(sys.argv) <= 2:
         usage()
-        exit(1)
 
     if sys.argv[1] == "take":
         if len(sys.argv) != 3:
@@ -184,13 +219,12 @@ if __name__ == "__main__":
         diff = r.get_diff(PACKAGE, VERSION, SERIES)
         r.display_diff(diff)
     elif sys.argv[1] == "promote":
-        if len(sys.argv) != 5:
+        if len(sys.argv) != 4:
             usage()
-        PACKAGE = sys.argv[2]
-        VERSION = sys.argv[3]
-        SERIES = sys.argv[4]
+        SERIES = sys.argv[2]
+        SET = sys.argv[3]
         r = ReviewSRUKernel()
-        r.promote_kernel(PACKAGE, VERSION, SERIES)
+        r.promote_kernel_set(SERIES, SET)
     elif sys.argv[1] == "status":
         if len(sys.argv) != 3:
             usage()
