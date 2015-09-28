@@ -43,13 +43,14 @@ class ReviewSRUKernel:
         self.ppa = team.getPPAByName(name="ppa")
         self.archive = self.ubuntu.main_archive
 
-    def set_bug_state(self, bugno, status):
+    def set_bug_state(self, bugno, status, pocket='proposed'):
         bug = self.launchpad.bugs[bugno]
         for task in bug.bug_tasks:
-              if task.bug_target_name == "kernel-sru-workflow/promote-to-proposed":
-                  task.status = status
-                  task.assignee = self.me
-                  task.lp_save()
+              if task.bug_target_name == "kernel-sru-workflow/promote-to-%s" % pocket:
+                  if task.status in ["Confirmed", "In Progress"]:
+                      task.status = status
+                      task.assignee = self.me
+                      task.lp_save()
 
     def review_packageset(self, packageset, version, series):
         packages = self.package_map[series][packageset]
@@ -179,6 +180,19 @@ class ReviewSRUKernel:
 
         # Check that everything is correct
 
+    def release(self, bugno, package_set, series):
+        # Assign yourself to both updates, security
+        self.set_bug_state(bugno, "In Progress", "updates")
+        self.set_bug_state(bugno, "In Progress", "security")
+
+        # Release the kernel!
+        packages = self.package_map[series][package_set]
+        cmd = ["sru-release", "--no-bugs", "--security", series]
+        cmd.extend(packages)
+        print(" ".join(cmd))
+        subprocess.Popen(cmd)
+
+
     def sanity_check(self):
         print("sanity check")
         # all bugs public?
@@ -195,6 +209,7 @@ def usage():
         print("       review <package> <version> <series>")
         print("       promote <package> <series>")
         print("       status <pocket>")
+        print("       release <bugno> <package> <series>")
         exit(1)
 
 if __name__ == "__main__":
@@ -231,6 +246,14 @@ if __name__ == "__main__":
         POCKET = sys.argv[2]
         r = ReviewSRUKernel()
         r.status(POCKET)
+    elif sys.argv[1] == "release":
+        if len(sys.argv) != 5:
+            usage()
+        BUGNO = sys.argv[2]
+        SET = sys.argv[3]
+        SERIES = sys.argv[4]
+        r = ReviewSRUKernel()
+        r.release(BUGNO, SET, SERIES)
     else:
         print("Invalid command")
 
