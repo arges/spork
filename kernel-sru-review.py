@@ -52,6 +52,11 @@ class ReviewSRUKernel:
                       task.assignee = self.me
                       task.lp_save()
 
+    def add_bug_message(self, bugno, subject, message):
+        bug = self.launchpad.bugs[bugno]
+        bug.newMessage(subject=subject, content=message)
+        bug.lp_save()
+
     def review_packageset(self, packageset, version, series):
         packages = self.package_map[series][packageset]
         for package in packages:
@@ -192,6 +197,27 @@ class ReviewSRUKernel:
         print(" ".join(cmd))
         subprocess.Popen(cmd)
 
+    def release_finish(self, bugno, package_set, series):
+
+        # Get status
+        status = ""
+        packages = ' '.join(self.package_map[series][package_set])
+        cmd = "rmadison -a source %s | grep %s-%s" % ( packages, series, "updates" )
+        try:
+            status = subprocess.check_output([cmd], shell=True).rstrip("\n\r")
+        except:
+            print("Error getting status")
+            exit(1)
+
+        text = "Promoted to Updates:\n%s" % status
+        print text
+
+        # Set bug states to Fix Released
+        self.set_bug_state(bugno, "Fix Released", "updates")
+        self.set_bug_state(bugno, "Fix Released", "security")
+
+        # Set bug message
+        self.add_bug_message(bugno, "Promoted to Updates", status)
 
     def sanity_check(self):
         print("sanity check")
@@ -210,6 +236,7 @@ def usage():
         print("       promote <package> <series>")
         print("       status <pocket>")
         print("       release <bugno> <package> <series>")
+        print("       release_finish <bugno> <package> <series>")
         exit(1)
 
 if __name__ == "__main__":
@@ -254,6 +281,14 @@ if __name__ == "__main__":
         SERIES = sys.argv[4]
         r = ReviewSRUKernel()
         r.release(BUGNO, SET, SERIES)
+    elif sys.argv[1] == "release_finish":
+        if len(sys.argv) != 5:
+            usage()
+        BUGNO = sys.argv[2]
+        SET = sys.argv[3]
+        SERIES = sys.argv[4]
+        r = ReviewSRUKernel()
+        r.release_finish(BUGNO, SET, SERIES)
     else:
         print("Invalid command")
 
