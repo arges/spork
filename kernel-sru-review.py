@@ -124,9 +124,9 @@ class ReviewSRUKernel:
                     print output
                 except: pass
 
-    def promote_kernel_set(self, series, package_set):
+    def promote_kernel_set(self, package_set, version, series):
 
-        # Finish this.
+        print("Not working yet.")
         exit(1)
 
         # Check if package_set is valid
@@ -153,7 +153,7 @@ class ReviewSRUKernel:
 
         # Otherwise wait for uefi upload
         upload=None
-        for i in range(0,5):
+        while True:
             # Wait some time for UEFI binary to become available
             time.sleep(10)
 
@@ -164,26 +164,44 @@ class ReviewSRUKernel:
                 break
 
             print("Waiting for UEFI binary...")
-
-        # If upload was never updated, then we need to bail.
-        if upload is None:
-            print("Couldn't locate UEFI binary, please complete manually.")
-            exit(1)
+        print("Accepted UEFI binary!")
 
         # Otherwise except the upload.
         upload.acceptFromQueue()
 
         # Wait for linux/linux-meta to land in -proposed
+        output = None
+        while True:
+            # Wait some time for linux / linux-meta to be published
+            time.sleep(60)
+            cmd = "rmadison -a source %s | grep %s-%s | grep %s" % ( 'linux', series, 'proposed', version )
+            try:
+                output = subprocess.check_output([cmd], shell=True)
+                print output
+                break
+            except:
+                pass
+
+            print("Waiting for %s %s %s to be published" % ( 'linux linux-meta', series, version ))
+
+        print("%s %s %s is published!" % ( 'linux linux-meta', series, version ))
 
         # Copy in linux-signed
         subprocess.Popen(["copy-proposed-kernel", series, "linux-signed"])
 
         # Wait and approve linux-signed new package
-        upload = distroseries.getPackageUploads(status="New",
-            name="linux-signed", version=version, exact_match=True)[0]
-        upload.acceptFromQueue()
+        upload=None
+        while True:
+            # Wait some time for linux-signed to become available
+            time.sleep(30)
+            upload = distroseries.getPackageUploads(status="New",
+                name="linux-signed", version=version, exact_match=True)[0]
+            if upload:
+                break
+            print("Waiting for linux-signed new package...")
+        print("Accepted linux-signed new package!")
 
-        # Check that everything is correct
+        upload.acceptFromQueue()
 
     def release(self, bugno, package_set, series):
         # Assign yourself to both updates, security
@@ -219,6 +237,14 @@ class ReviewSRUKernel:
         # Set bug message
         self.add_bug_message(bugno, "Promoted to Updates", status)
 
+    def list_sru_workflow(self):
+        workflow_tasks = self.workflow.searchTasks()
+        for task in workflow_tasks:
+            for subtask in task.related_tasks:
+              if "kernel-sru-workflow/promote-to-" in subtask.bug_target_name:
+                  if subtask.status == 'Confirmed' or subtask.status == 'In Progress':
+                      print "* %s [%s] %s" % (subtask.title, subtask.status, subtask.assignee)
+
     def sanity_check(self):
         print("sanity check")
         # all bugs public?
@@ -233,15 +259,16 @@ class ReviewSRUKernel:
 def usage():
         print("Usage: take <bugno>")
         print("       review <package> <version> <series>")
-        print("       promote <package> <series>")
+        print("       promote <package-set> <version> <series>")
         print("       status <pocket>")
         print("       release <bugno> <package> <series>")
         print("       release_finish <bugno> <package> <series>")
+        print("       list")
         exit(1)
 
 if __name__ == "__main__":
 
-    if len(sys.argv) <= 2:
+    if len(sys.argv) <= 1:
         usage()
 
     if sys.argv[1] == "take":
@@ -261,12 +288,13 @@ if __name__ == "__main__":
         diff = r.get_diff(PACKAGE, VERSION, SERIES)
         r.display_diff(diff)
     elif sys.argv[1] == "promote":
-        if len(sys.argv) != 4:
+        if len(sys.argv) != 5:
             usage()
-        SERIES = sys.argv[2]
-        SET = sys.argv[3]
+        SET = sys.argv[2]
+        VERSION = sys.argv[3]
+        SERIES = sys.argv[4]
         r = ReviewSRUKernel()
-        r.promote_kernel_set(SERIES, SET)
+        r.promote_kernel_set(SET, VERSION, SERIES)
     elif sys.argv[1] == "status":
         if len(sys.argv) != 3:
             usage()
@@ -289,6 +317,9 @@ if __name__ == "__main__":
         SERIES = sys.argv[4]
         r = ReviewSRUKernel()
         r.release_finish(BUGNO, SET, SERIES)
+    elif sys.argv[1] == "list":
+        r = ReviewSRUKernel()
+        r.list_sru_workflow()
     else:
-        print("Invalid command")
+        usage()
 
