@@ -62,32 +62,43 @@ class ReviewSRUKernel:
         bug.newMessage(subject=subject, content=message)
         bug.lp_save()
 
-    def get_diff(self, package_name, version, series):
+    def get_diff(self, package_name, version, series, manual=True):
         distroseries = self.ubuntu.getSeries(name_or_version=series)
         new_source = self.ppa.getPublishedSources(source_name=package_name,
-            version=version, distro_series=distroseries, exact_match=True)[0]
+            version=version, distro_series=distroseries, exact_match=True, status='Published')[0]
         if not new_source:
             print "Couldn't find sources!"
             exit(1)
 
         # Attempt to download launchpad generated diff
         try:
+            # TODO: improve logic here. Throw an exception to get into the
+            # manual diff creation block.
+            if manual:
+                raise Exception()
+
+            # Download whatever launchpad gives us.
             url = new_source.packageDiffUrl(to_version=version)
         except:
             # Try to construct diff manually.
-            # TODO: We diff against Updates, but in the rare case that this is
+            # We diff against Updates, but in the rare case that this is
             # the first SRU, we'll need to diff against the Release pocket.
             print "Launchpad diff pending, constructing diff manually."
-            old_source = self.archive.getPublishedSources(
-                source_name=package_name, distro_series=distroseries,
-                pocket='Updates', status='Published',  exact_match=True)[0]
+            try:
+                old_source = self.archive.getPublishedSources(
+                    source_name=package_name, distro_series=distroseries,
+                    pocket='Updates', status='Published',  exact_match=True)[0]
+            except:
+                old_source = self.archive.getPublishedSources(
+                    source_name=package_name, distro_series=distroseries,
+                    pocket='Release', status='Published',  exact_match=True)[0]
             old_dsc = [ f for f in old_source.sourceFileUrls() if f.endswith('.dsc') ][0]
             new_dsc = [ f for f in new_source.sourceFileUrls() if f.endswith('.dsc') ][0]
             old_filename = old_dsc.split('/')[-1]
             new_filename = new_dsc.split('/')[-1]
-            subprocess.call(["mkdir","temp"])
-            subprocess.call(["dget", "-u", old_dsc], cwd='temp')
-            subprocess.call(["dget", "-u", new_dsc], cwd='temp')
+            subprocess.call(["mkdir","-p","temp"])
+            subprocess.call(["dget", "-q", "-u", old_dsc], cwd='temp')
+            subprocess.call(["dget", "-q", "-u", new_dsc], cwd='temp')
             p1 = subprocess.Popen(["debdiff",
                 "%s" % old_filename, "%s" % new_filename],
                 stdout=subprocess.PIPE, cwd='temp')
@@ -107,7 +118,7 @@ class ReviewSRUKernel:
         return output
 
     def display_diff(self, text):
-        pydoc.pipepager(text, "view -")
+        pydoc.pipepager(text, "view -c 'set syntax=diff' -")
 
     def status(self, pocket):
         if pocket != 'proposed' and pocket != 'updates':
@@ -123,10 +134,12 @@ class ReviewSRUKernel:
                     print output
                 except: pass
 
-    def promote_kernel_set(self, package_set, version, series):
+    def promote_kernel_set(self, package_set, series):
 
         print("Not working yet.")
         exit(1)
+
+        version = 0
 
         # Check if package_set is valid
         if package_set not in self.package_map[series]:
@@ -240,19 +253,24 @@ class ReviewSRUKernel:
     def list_ppa_packages(self, series, packageset):
         distroseries = self.ubuntu.getSeries(name_or_version=series)
         packages = self.package_map[series][packageset]
+
+        package_versions = []
         for package in packages:
             new_source = self.ppa.getPublishedSources(source_name=package,
-                distro_series=distroseries, exact_match=True)[0]
+                status='Published', distro_series=distroseries, exact_match=True)[0]
             version = str(new_source.source_package_version)
             print "\t" + colored(str(package), 'white', attrs=['underline']) + " " + colored(version, 'green')
+            package_versions.append((package, version))
 
-    def list_sru_workflow(self):
+        return package_versions
+
+    def list_sru_workflow(self, review=False):
         workflow_tasks = self.workflow.searchTasks()
         for task in workflow_tasks:
             for subtask in task.related_tasks:
               if "kernel-sru-workflow/promote-to-" in subtask.bug_target_name:
                   if subtask.status == 'Confirmed' or subtask.status == 'In Progress':
-                      bugno = "LP: #" + str(subtask.bug.id)
+                      bugno = str(subtask.bug.id)
                       status = str(subtask.status)
                       title = str(subtask.title)
                       task_type = str(title.split(' ')[6]).replace(':','').replace('"','').replace('promote-to-','->')
@@ -271,13 +289,31 @@ class ReviewSRUKernel:
                       status_color = 'green' if status == 'In Progress' else 'red'
                       assignee_color = 'green' if assignee == 'arges' else 'red'
 
-                      print colored(bugno, 'white',attrs=['bold','underline']) + " " + \
+                      print colored("LP: #" + bugno, 'white',attrs=['bold','underline']) + " " + \
                           colored(status, status_color) + " " + \
                           colored(assignee, assignee_color) + " " + colored(task_type, 'green') + " " + \
                           colored(series, 'yellow') + " " + colored(packageset, 'yellow')
 
                       # list all source packages and versions
-                      self.list_ppa_packages(series, packageset)
+                      package_versions = self.list_ppa_packages(series, packageset)
+
+                      # Check for review mode.
+                      if review:
+                          # Ask if we should review it?
+                          print('Review this bug? '),
+                          answer = raw_input().lower()
+                          if answer in ('y','yes'):
+                              if status != 'In Progress' and assignee != 'arges':
+                                  print('Assigning...')
+                                  self.set_bug_state(bugno, "In Progress")
+                                  print("%s assigned and set to: %s" %( bugno, "In Progress" ))
+                              print('Reviewing...')
+                              for package_version in package_versions:
+                                  package = package_version[0]
+                                  version = package_version[1]
+                                  diff = self.get_diff(package, version, series)
+                                  r.display_diff(diff)
+
 
     def sanity_check(self):
         print("sanity check")
@@ -291,12 +327,12 @@ class ReviewSRUKernel:
         # no large amounts of removed files
 
 def usage():
-        print("Usage: take <bugno>")
-        print("       review <package> <version> <series>")
-        print("       promote <package-set> <version> <series>")
-        print("       status <pocket>")
+        print("Usage:")
+        print("       review")
+        print("       promote <package-set> <series>")
         print("       release <bugno> <package> <series>")
         print("       release_finish <bugno> <package> <series>")
+        print("       status <pocket>")
         print("       list")
         exit(1)
 
@@ -305,30 +341,16 @@ if __name__ == "__main__":
     if len(sys.argv) <= 1:
         usage()
 
-    if sys.argv[1] == "take":
-        if len(sys.argv) != 3:
-            usage()
-        BUGNO = sys.argv[2]
-        r = ReviewSRUKernel()
-        r.set_bug_state(BUGNO, "In Progress")
-        print("%s assigned and set to: %s" %( BUGNO, "In Progress" ))
     elif sys.argv[1] == "review":
-        if len(sys.argv) != 5:
-            usage()
-        PACKAGE = sys.argv[2]
-        VERSION = sys.argv[3]
-        SERIES = sys.argv[4]
         r = ReviewSRUKernel()
-        diff = r.get_diff(PACKAGE, VERSION, SERIES)
-        r.display_diff(diff)
+        r.list_sru_workflow(review=True)
     elif sys.argv[1] == "promote":
-        if len(sys.argv) != 5:
+        if len(sys.argv) != 4:
             usage()
         SET = sys.argv[2]
-        VERSION = sys.argv[3]
-        SERIES = sys.argv[4]
+        SERIES = sys.argv[3]
         r = ReviewSRUKernel()
-        r.promote_kernel_set(SET, VERSION, SERIES)
+        r.promote_kernel_set(SET, SERIES)
     elif sys.argv[1] == "status":
         if len(sys.argv) != 3:
             usage()
