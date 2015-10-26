@@ -35,6 +35,7 @@ class ReviewSRUKernel:
          },
          "wily" : {
             "linux": [ "linux", "linux-meta", "linux-signed" ],
+            "linux-raspi2": [ "linux-raspi2", "linux-meta-raspi2" ],
          }
     }
 
@@ -60,14 +61,6 @@ class ReviewSRUKernel:
         bug = self.launchpad.bugs[bugno]
         bug.newMessage(subject=subject, content=message)
         bug.lp_save()
-
-    def review_packageset(self, packageset, version, series):
-        packages = self.package_map[series][packageset]
-        for package in packages:
-            version_fixed = version.replace("-",".") if 'meta' in package else version
-            print version_fixed
-            url = self.get_diff(package, version_fixed, series)
-            self.display_diff(url)
 
     def get_diff(self, package_name, version, series):
         distroseries = self.ubuntu.getSeries(name_or_version=series)
@@ -243,6 +236,16 @@ class ReviewSRUKernel:
         # Set bug message
         self.add_bug_message(bugno, "Promoted to Updates", status)
 
+
+    def list_ppa_packages(self, series, packageset):
+        distroseries = self.ubuntu.getSeries(name_or_version=series)
+        packages = self.package_map[series][packageset]
+        for package in packages:
+            new_source = self.ppa.getPublishedSources(source_name=package,
+                distro_series=distroseries, exact_match=True)[0]
+            version = str(new_source.source_package_version)
+            print "\t" + colored(str(package), 'white', attrs=['underline']) + " " + colored(version, 'green')
+
     def list_sru_workflow(self):
         workflow_tasks = self.workflow.searchTasks()
         for task in workflow_tasks:
@@ -254,14 +257,27 @@ class ReviewSRUKernel:
                       title = str(subtask.title)
                       task_type = str(title.split(' ')[6]).replace(':','').replace('"','').replace('promote-to-','->')
                       assignee = str(subtask.assignee.name)
-                      package_type = str(title.split(' ')[7]).replace(':','').replace('"','')
+                      packageset = str(title.split(' ')[7]).replace(':','').replace('"','')
+
+                      # get series
+                      series = '???'
+                      tags = subtask.bug.tags
+                      for tag in tags:
+                          if tag in self.package_map.keys():
+                              series = tag
+                              break
 
                       # set colors
                       status_color = 'green' if status == 'In Progress' else 'red'
                       assignee_color = 'green' if assignee == 'arges' else 'red'
 
                       print colored(bugno, 'white',attrs=['bold','underline']) + " " + \
-                          colored(status, status_color) + " " + colored(assignee, assignee_color) + " " + colored(task_type, 'green') + " " + colored(package_type, 'blue')
+                          colored(status, status_color) + " " + \
+                          colored(assignee, assignee_color) + " " + colored(task_type, 'green') + " " + \
+                          colored(series, 'yellow') + " " + colored(packageset, 'yellow')
+
+                      # list all source packages and versions
+                      self.list_ppa_packages(series, packageset)
 
     def sanity_check(self):
         print("sanity check")
