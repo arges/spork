@@ -31,6 +31,9 @@ class ReviewSRUKernel:
          },
          "vivid" : {
             "linux": [ "linux", "linux-meta", "linux-signed" ],
+         },
+         "wily" : {
+            "linux": [ "linux", "linux-meta", "linux-signed" ],
          }
     }
 
