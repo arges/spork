@@ -130,8 +130,8 @@ class ReviewSRUKernel:
                 packages = ' '.join(self.package_map[series][packageset])
                 cmd = "rmadison -a source %s | grep %s-%s" % ( packages, series, pocket )
                 try:
-                    output = subprocess.check_output([cmd], shell=True)
-                    print output
+                    output = subprocess.check_output([cmd], shell=True).split('|')
+                    print colored(output[0].rstrip(),'yellow') + "\t" + colored(output[1].rstrip(), 'green') + "\t" + output[2].rstrip()
                 except: pass
 
     def promote_kernel_set(self, package_set, series):
