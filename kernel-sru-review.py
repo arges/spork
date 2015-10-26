@@ -10,6 +10,7 @@ import pydoc
 import subprocess
 import sys
 import time
+from termcolor import colored
 
 class ReviewSRUKernel:
 
@@ -80,7 +81,9 @@ class ReviewSRUKernel:
         try:
             url = new_source.packageDiffUrl(to_version=version)
         except:
-            # Try to construct diff manually
+            # Try to construct diff manually.
+            # TODO: We diff against Updates, but in the rare case that this is
+            # the first SRU, we'll need to diff against the Release pocket.
             print "Launchpad diff pending, constructing diff manually."
             old_source = self.archive.getPublishedSources(
                 source_name=package_name, distro_series=distroseries,
@@ -246,7 +249,19 @@ class ReviewSRUKernel:
             for subtask in task.related_tasks:
               if "kernel-sru-workflow/promote-to-" in subtask.bug_target_name:
                   if subtask.status == 'Confirmed' or subtask.status == 'In Progress':
-                      print "* %s [%s] %s" % (subtask.title, subtask.status, subtask.assignee)
+                      bugno = "LP: #" + str(subtask.bug.id)
+                      status = str(subtask.status)
+                      title = str(subtask.title)
+                      task_type = str(title.split(' ')[6]).replace(':','').replace('"','').replace('promote-to-','->')
+                      assignee = str(subtask.assignee.name)
+                      package_type = str(title.split(' ')[7]).replace(':','').replace('"','')
+
+                      # set colors
+                      status_color = 'green' if status == 'In Progress' else 'red'
+                      assignee_color = 'green' if assignee == 'arges' else 'red'
+
+                      print colored(bugno, 'white',attrs=['bold','underline']) + " " + \
+                          colored(status, status_color) + " " + colored(assignee, assignee_color) + " " + colored(task_type, 'green') + " " + colored(package_type, 'blue')
 
     def sanity_check(self):
         print("sanity check")
