@@ -229,27 +229,34 @@ class ReviewSRUKernel:
         print(" ".join(cmd))
         subprocess.Popen(cmd)
 
-    def release_finish(self, bugno, package_set, series):
+    def finish(self, bugno, package_set, series, pocket="updates"):
 
         # Get status
         status = ""
         packages = ' '.join(self.package_map[series][package_set])
-        cmd = "rmadison -a source %s | grep %s-%s" % ( packages, series, "updates" )
+        cmd = "rmadison -a source %s | grep %s-%s" % ( packages, series, pocket)
         try:
             status = subprocess.check_output([cmd], shell=True).rstrip("\n\r")
         except:
             print("Error getting status")
             exit(1)
 
-        text = "Promoted to Updates:\n%s" % status
+        text = "Promoted to %s:\n%s" % (pocket.capitalize(), status)
         print text
 
-        # Set bug states to Fix Released
-        self.set_bug_state(bugno, "Fix Released", "updates")
-        self.set_bug_state(bugno, "Fix Released", "security")
+        # Look good?
+        print("Does this look correct? "),
+        answer = raw_input().lower()
+        if answer in ('y','yes'):
+            # Set bug states to Fix Released
+            if pocket == "updates":
+                self.set_bug_state(bugno, "Fix Released", "updates")
+                self.set_bug_state(bugno, "Fix Released", "security")
+            else:
+                self.set_bug_state(bugno, "Fix Released", "proposed")
 
-        # Set bug message
-        self.add_bug_message(bugno, "Promoted to Updates", status)
+            # Set bug message
+            self.add_bug_message(bugno, "Promoted to " + pocket.capitalize(), status)
 
 
     def list_ppa_packages(self, series, packageset):
@@ -333,7 +340,7 @@ def usage():
         print("       review")
         print("       promote <package-set> <series>")
         print("       release <bugno> <package> <series>")
-        print("       release_finish <bugno> <package> <series>")
+        print("       finish <bugno> <package> <series> <pocket>")
         print("       status <pocket>")
         print("       list")
         exit(1)
@@ -367,14 +374,15 @@ if __name__ == "__main__":
         SERIES = sys.argv[4]
         r = ReviewSRUKernel()
         r.release(BUGNO, SET, SERIES)
-    elif sys.argv[1] == "release_finish":
-        if len(sys.argv) != 5:
+    elif sys.argv[1] == "finish":
+        if len(sys.argv) != 6:
             usage()
         BUGNO = sys.argv[2]
         SET = sys.argv[3]
         SERIES = sys.argv[4]
+        POCKET = sys.argv[5]
         r = ReviewSRUKernel()
-        r.release_finish(BUGNO, SET, SERIES)
+        r.finish(BUGNO, SET, SERIES, POCKET)
     elif sys.argv[1] == "list":
         r = ReviewSRUKernel()
         r.list_sru_workflow()
