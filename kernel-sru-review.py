@@ -29,6 +29,8 @@ class ReviewSRUKernel:
                                    "linux-signed-lts-utopic" ],
             "linux-lts-vivid" : [ "linux-lts-vivid", "linux-meta-lts-vivid",
                                   "linux-signed-lts-vivid" ],
+            "linux-lts-wily" : [ "linux-lts-wily", "linux-meta-lts-wily",
+                                  "linux-signed-lts-wily" ],
          },
          "vivid" : {
             "linux": [ "linux", "linux-meta", "linux-signed" ],
