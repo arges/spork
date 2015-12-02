@@ -310,20 +310,22 @@ class ReviewSRUKernel:
 
                       # Check for review mode.
                       if review:
-                          # Ask if we should review it?
-                          print('Review this bug? '),
-                          answer = raw_input().lower()
-                          if answer in ('y','yes'):
-                              if status != 'In Progress' and assignee != 'arges':
-                                  print('Assigning...')
-                                  self.set_bug_state(bugno, "In Progress")
-                                  print("%s assigned and set to: %s" %( bugno, "In Progress" ))
-                              print('Reviewing...')
-                              for package_version in package_versions:
-                                  package = package_version[0]
-                                  version = package_version[1]
-                                  diff = self.get_diff(package, version, series)
-                                  r.display_diff(diff)
+                          # Check if this is a proposed issue
+                          if "kernel-sru-workflow/promote-to-proposed" in subtask.bug_target_name:
+                              # Ask if we should review it?
+                              print('Review this bug? '),
+                              answer = raw_input().lower()
+                              if answer in ('y','yes'):
+                                  if status != 'In Progress' and assignee != 'arges':
+                                      print('Assigning...')
+                                      self.set_bug_state(bugno, "In Progress")
+                                      print("%s assigned and set to: %s" %( bugno, "In Progress" ))
+                                  print('Reviewing...')
+                                  for package_version in package_versions:
+                                      package = package_version[0]
+                                      version = package_version[1]
+                                      diff = self.get_diff(package, version, series)
+                                      r.display_diff(diff)
 
 
     def sanity_check(self):
