@@ -50,6 +50,13 @@ class ReviewSRUKernel:
         self.ppa = team.getPPAByName(name="ppa")
         self.archive = self.ubuntu.main_archive
 
+    def ask(self, message):
+        print(message)
+        answer = raw_input().lower()
+        if answer in ('y','yes'):
+            return True
+        return False
+
     def set_bug_state(self, bugno, status, pocket='proposed'):
         bug = self.launchpad.bugs[bugno]
         for task in bug.bug_tasks:
@@ -58,6 +65,13 @@ class ReviewSRUKernel:
                       task.status = status
                       task.assignee = self.me
                       task.lp_save()
+
+    def get_bug_state(self, bugno, workflow_task):
+        bug = self.launchpad.bugs[bugno]
+        for task in bug.bug_tasks:
+              if task.bug_target_name == "kernel-sru-workflow/%s" % workflow_task:
+                  return task.status
+        return None
 
     def add_bug_message(self, bugno, subject, message):
         bug = self.launchpad.bugs[bugno]
@@ -138,33 +152,34 @@ class ReviewSRUKernel:
                         print colored(s[0].rstrip(),'yellow').ljust(42) + " " + colored(s[1].rstrip(), 'green').ljust(32) + " " + s[2].rstrip()
                 except: pass
 
-    def promote_kernel_set(self, package_set, series):
+    def promote_kernel_set(self, bugno):
 
-        print("Not working yet.")
-        exit(1)
-
-        version = 0
+        (packageset, series, version) = self.extract_fields_from_bug(bugno)
 
         # Check if package_set is valid
-        if package_set not in self.package_map[series]:
-            print("Invalid package set")
+        if packageset not in self.package_map[series]:
+            print("Invalid package set: %s" % packageset)
             exit(1)
 
         # Get variables
         distroseries = self.ubuntu.getSeries(name_or_version=series)
-        packages = self.package_map[series][package_set]
+        packages = self.package_map[series][packageset]
         print packages
+        base_package = packages[0]
 
-        # Copy anything that isn't signed first
+        print("Not fully working.")
+        exit(1)
+
+        # Copy everything over at once
         set_has_signed=False
         for package in packages:
-            if "signed" not in package:
-                subprocess.Popen(["copy-proposed-kernel", series, package])
-            else:
+            subprocess.Popen(["copy-proposed-kernel", series, package])
+            if "signed" in package:
                 set_has_signed=True
 
         # If there were no signed kernel then we are done
         if not set_has_signed:
+            print("Copied all packages")
             return
 
         # Otherwise wait for uefi upload
@@ -190,7 +205,7 @@ class ReviewSRUKernel:
         while True:
             # Wait some time for linux / linux-meta to be published
             time.sleep(60)
-            cmd = "rmadison -a source %s | grep %s-%s | grep %s" % ( 'linux', series, 'proposed', version )
+            cmd = "rmadison -a source %s | grep %s-%s | grep %s" % ( base_package, series, 'proposed', version )
             try:
                 output = subprocess.check_output([cmd], shell=True)
                 print output
@@ -198,10 +213,13 @@ class ReviewSRUKernel:
             except:
                 pass
 
-            print("Waiting for %s %s %s to be published" % ( 'linux linux-meta', series, version ))
+            print("Waiting for %s %s %s to be published" % ( base_package, series, version ))
 
-        print("%s %s %s is published!" % ( 'linux linux-meta', series, version ))
+        print("%s %s %s is published!" % ( base_package, series, version ))
 
+        print("Now re-try the signed build, and accept the new binary.")
+
+        """
         # Copy in linux-signed
         subprocess.Popen(["copy-proposed-kernel", series, "linux-signed"])
 
@@ -218,24 +236,44 @@ class ReviewSRUKernel:
         print("Accepted linux-signed new package!")
 
         upload.acceptFromQueue()
+        """
 
-    def release(self, bugno, package_set, series):
-        # Assign yourself to both updates, security
+
+    def release(self, bugno):
+        (packageset, series, version) = self.extract_fields_from_bug(bugno)
+
+        # Check if security needs to be updated
+        security = True
+        if self.get_bug_state(bugno, "Security-signoff") == "Invalid":
+            security = False
+
+        # Ask for confirmation
+        print("LP: #%s %s %s -> %s-updates" % (bugno, packageset, version, series))
+        if not ask("Release into updates? "):
+            return
+
+        # Assign to updates/security if necessary
         self.set_bug_state(bugno, "In Progress", "updates")
-        self.set_bug_state(bugno, "In Progress", "security")
+        if security:
+            self.set_bug_state(bugno, "In Progress", "security")
 
         # Release the kernel!
-        packages = self.package_map[series][package_set]
+        packages = self.package_map[series][packageset]
         cmd = ["sru-release", "--no-bugs", "--security", series]
         cmd.extend(packages)
         print(" ".join(cmd))
         subprocess.Popen(cmd)
 
-    def finish(self, bugno, package_set, series, pocket="updates"):
+    def finish(self, bugno, pocket="updates"):
+
+        # Determine information.
+        (packageset, series, version) = self.extract_fields_from_bug(bugno)
+
+        # TODO: Check if any packages are not published
 
         # Get status
         status = ""
-        packages = ' '.join(self.package_map[series][package_set])
+        packages = ' '.join(self.package_map[series][packageset])
         cmd = "rmadison -a source %s | grep %s-%s" % ( packages, series, pocket)
         try:
             status = subprocess.check_output([cmd], shell=True).rstrip("\n\r")
@@ -247,9 +285,7 @@ class ReviewSRUKernel:
         print text
 
         # Look good?
-        print("Does this look correct? "),
-        answer = raw_input().lower()
-        if answer in ('y','yes'):
+        if self.ask("Does this look correct? "):
             # Set bug states to Fix Released
             if pocket == "updates":
                 self.set_bug_state(bugno, "Fix Released", "updates")
@@ -260,20 +296,51 @@ class ReviewSRUKernel:
             # Set bug message
             self.add_bug_message(bugno, "Promoted to " + pocket.capitalize(), status)
 
+        # Print output message
+        wording = "released" if pocket == "updates" else "promoted"
+        print("* LP: #%s - %s %s %s to %s-%s" % (bugno, wording, packageset, version, series, pocket))
 
-    def list_ppa_packages(self, series, packageset):
+    def list_ppa_packages(self, series, packageset, version):
         distroseries = self.ubuntu.getSeries(name_or_version=series)
         packages = self.package_map[series][packageset]
+        abi = '.'.join(version.split('.')[:3])
 
         package_versions = []
         for package in packages:
-            new_source = self.ppa.getPublishedSources(source_name=package,
-                status='Published', distro_series=distroseries, exact_match=True)[0]
-            version = str(new_source.source_package_version)
-            print "\t" + colored(str(package), 'white', attrs=['underline']) + " " + colored(version, 'green')
-            package_versions.append((package, version))
+	    sources = self.ppa.getPublishedSources(source_name=package,
+                distro_series=distroseries)
+
+            # Match version with source and correct status depending on package
+            found_match = False
+            for source in sources:
+                source_version = str(source.source_package_version)
+                source_status = str(source.status)
+                if source_status in ['Published', 'Superseded']:
+                    if '-meta' in package:
+                        if abi.replace('-','.') in source_version:
+                            found_match = True
+                            break
+                    else:
+                        if version in source_version:
+                            found_match = True
+                            break
+            if not found_match:
+                print("Couldn't find %s %s %s in the PPA" % (packageset, series, abi))
+                exit(1)
+
+            print "\t" + colored(str(package), 'white', attrs=['underline']) + " " + colored(source_version, 'green')
+            package_versions.append((package, source_version))
 
         return package_versions
+
+    def extract_fields_from_bug(self, bugno):
+        bug = self.launchpad.bugs[bugno]
+        title = bug.title
+
+        packageset = str(title.split(' ')[0]).replace(':','').replace('"','')
+        version = str(title.split(' ')[1])
+        (series,) = set(bug.tags).intersection(self.package_map.keys())
+        return (packageset, series, version)
 
     def list_sru_workflow(self, review=False):
         workflow_tasks = self.workflow.searchTasks()
@@ -281,20 +348,13 @@ class ReviewSRUKernel:
             for subtask in task.related_tasks:
               if "kernel-sru-workflow/promote-to-" in subtask.bug_target_name:
                   if subtask.status == 'Confirmed' or subtask.status == 'In Progress':
+
                       bugno = str(subtask.bug.id)
                       status = str(subtask.status)
                       title = str(subtask.title)
                       task_type = str(title.split(' ')[6]).replace(':','').replace('"','').replace('promote-to-','->')
                       assignee = str(subtask.assignee.name)
-                      packageset = str(title.split(' ')[7]).replace(':','').replace('"','')
-
-                      # get series
-                      series = '???'
-                      tags = subtask.bug.tags
-                      for tag in tags:
-                          if tag in self.package_map.keys():
-                              series = tag
-                              break
+                      (packageset, series, version) = self.extract_fields_from_bug(bugno)
 
                       # set colors
                       status_color = 'green' if status == 'In Progress' else 'red'
@@ -306,16 +366,13 @@ class ReviewSRUKernel:
                           colored(series, 'yellow') + " " + colored(packageset, 'yellow')
 
                       # list all source packages and versions
-                      package_versions = self.list_ppa_packages(series, packageset)
+                      package_versions = self.list_ppa_packages(series, packageset, version)
 
                       # Check for review mode.
                       if review:
                           # Check if this is a proposed issue
                           if "kernel-sru-workflow/promote-to-proposed" in subtask.bug_target_name:
-                              # Ask if we should review it?
-                              print('Review this bug? '),
-                              answer = raw_input().lower()
-                              if answer in ('y','yes'):
+                              if self.ask('Review this bug? '):
                                   if status != 'In Progress' and assignee != 'arges':
                                       print('Assigning...')
                                       self.set_bug_state(bugno, "In Progress")
@@ -342,9 +399,9 @@ class ReviewSRUKernel:
 def usage():
         print("Usage:")
         print("       review")
-        print("       promote <package-set> <series>")
-        print("       release <bugno> <package> <series>")
-        print("       finish <bugno> <package> <series> <pocket>")
+        print("       promote <bugno>")
+        print("       release <bugno>")
+        print("       finish <bugno> <pocket>")
         print("       status <pocket>")
         print("       list")
         exit(1)
@@ -358,12 +415,11 @@ if __name__ == "__main__":
         r = ReviewSRUKernel()
         r.list_sru_workflow(review=True)
     elif sys.argv[1] == "promote":
-        if len(sys.argv) != 4:
+        if len(sys.argv) != 3:
             usage()
-        SET = sys.argv[2]
-        SERIES = sys.argv[3]
+        BUGNO = sys.argv[2]
         r = ReviewSRUKernel()
-        r.promote_kernel_set(SET, SERIES)
+        r.promote_kernel_set(BUGNO)
     elif sys.argv[1] == "status":
         if len(sys.argv) != 3:
             usage()
@@ -371,22 +427,18 @@ if __name__ == "__main__":
         r = ReviewSRUKernel()
         r.status(POCKET)
     elif sys.argv[1] == "release":
-        if len(sys.argv) != 5:
+        if len(sys.argv) != 3:
             usage()
         BUGNO = sys.argv[2]
-        SET = sys.argv[3]
-        SERIES = sys.argv[4]
         r = ReviewSRUKernel()
-        r.release(BUGNO, SET, SERIES)
+        r.release(BUGNO)
     elif sys.argv[1] == "finish":
-        if len(sys.argv) != 6:
+        if len(sys.argv) != 4:
             usage()
         BUGNO = sys.argv[2]
-        SET = sys.argv[3]
-        SERIES = sys.argv[4]
-        POCKET = sys.argv[5]
+        POCKET = sys.argv[3]
         r = ReviewSRUKernel()
-        r.finish(BUGNO, SET, SERIES, POCKET)
+        r.finish(BUGNO, POCKET)
     elif sys.argv[1] == "list":
         r = ReviewSRUKernel()
         r.list_sru_workflow()
