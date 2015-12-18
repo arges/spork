@@ -167,8 +167,6 @@ class ReviewSRUKernel:
         print packages
         base_package = packages[0]
 
-        print("Not fully working.")
-        exit(1)
 
         # Copy everything over at once
         set_has_signed=False
@@ -184,21 +182,27 @@ class ReviewSRUKernel:
 
         # Otherwise wait for uefi upload
         upload=None
+        print version
         while True:
             # Wait some time for UEFI binary to become available
-            time.sleep(10)
 
             # TODO detect the correct name here
-            upload = distroseries.getPackageUploads(status="Unapproved",
-                name="linux", version=version, exact_match=True)[0]
-            if upload:
+            try:
+                uploads = distroseries.getPackageUploads(status="Unapproved",
+                    name="%s_%s" % (base_package, version))[0]
+                for u in uploads:
+                    print u
+                print("do it manually")
+                exit(1)
                 break
+            except:
+                time.sleep(10)
+                print("Waiting for UEFI binary...")
 
-            print("Waiting for UEFI binary...")
-        print("Accepted UEFI binary!")
-
-        # Otherwise except the upload.
         upload.acceptFromQueue()
+        print("Accepted UEFI binary!")
+        print("Now wait a while...")
+        exit(1)
 
         # Wait for linux/linux-meta to land in -proposed
         output = None
@@ -249,7 +253,7 @@ class ReviewSRUKernel:
 
         # Ask for confirmation
         print("LP: #%s %s %s -> %s-updates" % (bugno, packageset, version, series))
-        if not ask("Release into updates? "):
+        if not self.ask("Release into updates? "):
             return
 
         # Assign to updates/security if necessary
@@ -326,7 +330,6 @@ class ReviewSRUKernel:
                             break
             if not found_match:
                 print("Couldn't find %s %s %s in the PPA" % (packageset, series, abi))
-                exit(1)
 
             print "\t" + colored(str(package), 'white', attrs=['underline']) + " " + colored(source_version, 'green')
             package_versions.append((package, source_version))
