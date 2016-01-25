@@ -7,101 +7,82 @@
 
 import sys
 import subprocess
+import urllib2
+from HTMLParser import HTMLParser
 from launchpadlib.launchpad import Launchpad
+
+class LaunchpadWebpageDDEBParser(HTMLParser):
+    found = False
+    done = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'div':
+            for attr in attrs:
+                if attr == ('id', 'downloadable-files'):
+                    self.found = True
+
+        if self.found and tag == 'a':
+            for attr in attrs:
+                if attr[0] == 'href':
+                     self.url = attr[1]
+                     self.done = True
+
+    def handle_endtag(self, tag):
+        self.found = False
+
+    def get_url(self):
+        return self.url
 
 class GetPackageLaunchpadURLQuery:
     build = None
 
-    def __init__(self, arch, version, series):
-        launchpad = Launchpad.login_anonymously('spork', 'production')
-        ubuntu = launchpad.distributions["ubuntu"]
-
-        self.main_archive = ubuntu.main_archive
-
-        team = launchpad.people["canonical-kernel-team"]
-        self.ppa = team.getPPAByName(name="ppa")
-
+    def __init__(self, arch, version, series, flavor='generic'):
         self.arch = arch
-        self.series = ubuntu.getSeries(name_or_version=series)
-        self.archseries = self.series.getDistroArchSeries(archtag=self.arch)
-
-        self.build = self.get_build(version)
-
+        self.series = series
         self.version = version
         self.abi = '.'.join(version.split('.')[0:3])
+        self.flavor = flavor
 
+    def scrape_kernel_file(self, source_pkg_name):
+        url = "https://launchpad.net/ubuntu/" + str(self.series) + "/" + \
+              str(self.arch) + "/" + source_pkg_name + "/" + str(self.version)
+        html = urllib2.urlopen(url).read()
+        parser = LaunchpadWebpageDDEBParser()
+        parser.feed(html)
+        return parser.get_url()
 
-    def get_build(self, version):
-        """ get build object for binary package from any appropriate archive """
-        abi = '.'.join(version.split(".")[:3])
-        binary_name="linux-image-%s-generic" % abi
+    def test_file(self, url):
+        try:
+            urllib2.urlopen(url).headers.getheader('Content-Length')
+        except urllib2.HTTPError:
+            print("404 error testing if %s exists.", url)
+            return False
+        return True
 
-        binaries = self.main_archive.getPublishedBinaries(
-	    binary_name=binary_name, distro_arch_series=self.archseries,
-            version=version, exact_match=True)
-        if not binaries:
-            binaries = self.ppa.getPublishedBinaries(
-	        binary_name=binary_name, distro_arch_series=self.archseries,
-                version=version, exact_match=True)
-            if not binaries:
-                print "%s %s not found." % (version, self.arch)
-                exit(1)
+    def get_kernel_debug_package(self):
+        source_pkg_name = "linux-image-%s-generic-dbgsym" % (self.abi)
+        url = self.scrape_kernel_file(source_pkg_name)
+        if self.test_file(url):
+            return(url)
 
-        return binaries[0].build
+    def get_kernel_packages(self):
+        urls = []
 
-    def get_base_url(self):
-        return("%s/+files" % self.build.web_link)
+        source_pkg_name = "linux-image-%s-generic" % (self.abi)
+        url = self.scrape_kernel_file(source_pkg_name)
+        if self.test_file(url):
+            urls.append(url)
 
-    def get_dep_build(self, binary_name, version):
-        return self.main_archive.getPublishedBinaries(
-	    binary_name=binary_name, distro_arch_series=self.archseries,
-            version=version, exact_match=True)
+        source_pkg_name = "linux-image-extra-%s-generic" % (self.abi)
+        url = self.scrape_kernel_file(source_pkg_name)
+        if self.test_file(url):
+            urls.append(url)
 
-    def get_dep_packages(self):
-        """ This function could probably be re-written. """
-        build_log_url = self.build.build_log_url
-        p1 = subprocess.Popen(["wget", "-qO-", build_log_url],
-            stdout=subprocess.PIPE)
-        p2 = subprocess.Popen(["zgrep", "Package versions"],
-            stdin=p1.stdout, stdout=subprocess.PIPE)
-        p1.stdout.close()
-        package_versions = p2.communicate()[0].split(' ')
-        p2.stdout.close()
-        dep_package_versions = []
-        for package in package_versions:
-            if not 'Package' in package and not 'versions:' in package:
-                dep_package_versions.append(package)
-
-        # For each dep_package_version look it up and return the launchpad URL
-        dep_package_urls = []
-        for package in dep_package_versions:
-            (binary_name, version) = package.split('_')
-            try:
-                build = self.get_dep_build(binary_name, version)[0].build
-            except:
-                continue
-
-            arch = build.arch_tag
-            f = lambda ver : version.split(':')[1] if ':' in version else version
-            deb = "%s_%s_%s.deb" % (binary_name, f(version), arch)
-            dep_package_urls.append("%s/+files/%s" % (build, deb))
-
-        return ' '.join(dep_package_urls)
-
-    def get_kernel_packages(self, base_url):
-        return(' '.join([ "%s/linux-image-%s-generic_%s_%s.deb" %
-                 (base_url, self.abi, self.version, self.arch),
-                 "%s/linux-image-extra-%s-generic_%s_%s.deb" %
-                 (base_url, self.abi, self.version, self.arch)
-               ]))
-
-    def get_kernel_debug_package(self, base_url):
-        return("%s/linux-image-%s-generic-dbgsym_%s_%s.ddeb" %
-               (base_url, self.abi, self.version, self.arch))
+        return urls
 
 if __name__ == "__main__":
     if len(sys.argv) != 5:
-        print("Usage: %s <version> <series> <arch> <set:kernel,debug,dep>" % sys.argv[0])
+        print("Usage: %s <version> <series> <arch> <set:kernel,debug>" % sys.argv[0])
         exit(1)
 
     VERSION = sys.argv[1]
@@ -110,14 +91,11 @@ if __name__ == "__main__":
     PACKAGE_SET = sys.argv[4]
 
     q = GetPackageLaunchpadURLQuery(ARCH, VERSION, SERIES)
-    base_url = q.get_base_url()
 
     if PACKAGE_SET == 'debug':
-        print q.get_kernel_debug_package(base_url)
+        print q.get_kernel_debug_package()
     elif PACKAGE_SET == 'kernel':
-        print q.get_kernel_packages(base_url)
-    elif PACKAGE_SET == 'dep':
-        print q.get_dep_packages()
+        print q.get_kernel_packages()
     else:
         print "Invalid set argument."
         exit(1)
