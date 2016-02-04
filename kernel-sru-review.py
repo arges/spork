@@ -2,15 +2,16 @@
 #
 # Kernel SRU Review Tool
 #
-# Copyright (C) 2015 Chris J Arges <chris.j.arges@canonical.com>
+# Copyright (C) 2015, 2016 Chris J Arges <chris.j.arges@canonical.com>
 #
 
 from launchpadlib.launchpad import Launchpad
+from termcolor import colored
+import argparse
 import pydoc
 import subprocess
 import sys
 import time
-from termcolor import colored
 
 class ReviewSRUKernel:
 
@@ -41,7 +42,7 @@ class ReviewSRUKernel:
          }
     }
 
-    def __init__(self):
+    def __init__(self, args):
         self.launchpad = Launchpad.login_with("spork", "production", version="devel")
         self.ubuntu = self.launchpad.distributions["ubuntu"]
         self.workflow = self.launchpad.projects["kernel-sru-workflow"]
@@ -49,8 +50,12 @@ class ReviewSRUKernel:
         team = self.launchpad.people["canonical-kernel-team"]
         self.ppa = team.getPPAByName(name="ppa")
         self.archive = self.ubuntu.main_archive
+        self.args = args
 
     def ask(self, message):
+        if self.args.yes:
+            return True
+
         print(message)
         answer = raw_input().lower()
         if answer in ('y','yes'):
@@ -78,7 +83,7 @@ class ReviewSRUKernel:
         bug.newMessage(subject=subject, content=message)
         bug.lp_save()
 
-    def get_diff(self, package_name, version, series, manual=True):
+    def get_diff(self, package_name, version, series):
         distroseries = self.ubuntu.getSeries(name_or_version=series)
         new_source = self.ppa.getPublishedSources(source_name=package_name,
             version=version, distro_series=distroseries, exact_match=True, status='Published')[0]
@@ -90,7 +95,7 @@ class ReviewSRUKernel:
         try:
             # TODO: improve logic here. Throw an exception to get into the
             # manual diff creation block.
-            if manual:
+            if self.args.manual:
                 raise Exception()
 
             # Download whatever launchpad gives us.
@@ -399,52 +404,43 @@ class ReviewSRUKernel:
         # no swp or random binary files
         # no large amounts of removed files
 
-def usage():
-        print("Usage:")
-        print("       review")
-        print("       promote <bugno>")
-        print("       release <bugno>")
-        print("       finish <bugno> <pocket>")
-        print("       status <pocket>")
-        print("       list")
-        exit(1)
+def parse():
+    parser = argparse.ArgumentParser(description='Kernel SRU Review Tool')
+    parser.add_argument('--yes','-y', action='store_true')
+    parser.add_argument('--verbose','-v', action='store_true')
+    parser.add_argument('--manual','-m', action='store_true')
+    subparsers = parser.add_subparsers(dest='command')
+    review_parser = subparsers.add_parser('review')
+    list_parser = subparsers.add_parser('list')
+    promote_parser = subparsers.add_parser('promote')
+    promote_parser.add_argument("bug_number")
+    release_parser = subparsers.add_parser('release')
+    release_parser.add_argument("bug_number")
+    finish_parser = subparsers.add_parser('finish')
+    finish_parser.add_argument("bug_number")
+    finish_parser.add_argument("pocket", default="proposed")
+    status_parser = subparsers.add_parser('status')
+    status_parser.add_argument("pocket", default="proposed")
+    args = parser.parse_args()
+    return args
 
 if __name__ == "__main__":
-
-    if len(sys.argv) <= 1:
-        usage()
-
-    elif sys.argv[1] == "review":
-        r = ReviewSRUKernel()
+    args = parse()
+    if args.command == "review":
+        r = ReviewSRUKernel(args)
         r.list_sru_workflow(review=True)
-    elif sys.argv[1] == "promote":
-        if len(sys.argv) != 3:
-            usage()
-        BUGNO = sys.argv[2]
-        r = ReviewSRUKernel()
-        r.promote_kernel_set(BUGNO)
-    elif sys.argv[1] == "status":
-        if len(sys.argv) != 3:
-            usage()
-        POCKET = sys.argv[2]
-        r = ReviewSRUKernel()
-        r.status(POCKET)
-    elif sys.argv[1] == "release":
-        if len(sys.argv) != 3:
-            usage()
-        BUGNO = sys.argv[2]
-        r = ReviewSRUKernel()
-        r.release(BUGNO)
-    elif sys.argv[1] == "finish":
-        if len(sys.argv) != 4:
-            usage()
-        BUGNO = sys.argv[2]
-        POCKET = sys.argv[3]
-        r = ReviewSRUKernel()
-        r.finish(BUGNO, POCKET)
-    elif sys.argv[1] == "list":
-        r = ReviewSRUKernel()
+    elif args.command == "promote":
+        r = ReviewSRUKernel(args)
+        r.promote_kernel_set(args.bug_number)
+    elif args.command == "status":
+        r = ReviewSRUKernel(args)
+        r.status(args.pocket)
+    elif args.command == "release":
+        r = ReviewSRUKernel(args)
+        r.release(args.bug_number)
+    elif args.command == "finish":
+        r = ReviewSRUKernel(args)
+        r.finish(args.bug_number, args.pocket)
+    elif args.command == "list":
+        r = ReviewSRUKernel(args)
         r.list_sru_workflow()
-    else:
-        usage()
-
