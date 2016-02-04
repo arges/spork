@@ -56,7 +56,7 @@ class ReviewSRUKernel:
         if self.args.yes:
             return True
 
-        print(message)
+        print colored(message,'red')
         answer = raw_input().lower()
         if answer in ('y','yes'):
             return True
@@ -157,157 +157,122 @@ class ReviewSRUKernel:
                         print colored(s[0].rstrip(),'yellow').ljust(42) + " " + colored(s[1].rstrip(), 'green').ljust(32) + " " + s[2].rstrip()
                 except: pass
 
-    def promote_kernel_set(self, bugno):
+    def promote_kernel_set(self, bugnos):
+        for bugno in bugnos:
+            (packageset, series, version) = self.extract_fields_from_bug(bugno)
 
-        (packageset, series, version) = self.extract_fields_from_bug(bugno)
-
-        # Check if package_set is valid
-        if packageset not in self.package_map[series]:
-            print("Invalid package set: %s" % packageset)
-            exit(1)
-
-        # Get variables
-        distroseries = self.ubuntu.getSeries(name_or_version=series)
-        packages = self.package_map[series][packageset]
-        print packages
-        base_package = packages[0]
-
-
-        # Copy everything over at once
-        set_has_signed=False
-        for package in packages:
-            subprocess.Popen(["copy-proposed-kernel", series, package])
-            if "signed" in package:
-                set_has_signed=True
-
-        # If there were no signed kernel then we are done
-        if not set_has_signed:
-            print("Copied all packages")
-            return
-
-        # Otherwise wait for uefi upload
-        upload=None
-        print version
-        while True:
-            # Wait some time for UEFI binary to become available
-
-            # TODO detect the correct name here
-            try:
-                uploads = distroseries.getPackageUploads(status="Unapproved",
-                    name="%s_%s" % (base_package, version))[0]
-                for u in uploads:
-                    print u
-                print("do it manually")
+            # Check if package_set is valid
+            if packageset not in self.package_map[series]:
+                print("Invalid package set: %s" % packageset)
                 exit(1)
-                break
-            except:
-                time.sleep(10)
-                print("Waiting for UEFI binary...")
 
-        upload.acceptFromQueue()
-        print("Accepted UEFI binary!")
-        print("Now wait a while...")
-        exit(1)
+            # Get variables
+            distroseries = self.ubuntu.getSeries(name_or_version=series)
+            packages = self.package_map[series][packageset]
+            base_package = packages[0]
 
-        # Wait for linux/linux-meta to land in -proposed
-        output = None
-        while True:
-            # Wait some time for linux / linux-meta to be published
-            time.sleep(60)
-            cmd = "rmadison -a source %s | grep %s-%s | grep %s" % ( base_package, series, 'proposed', version )
-            try:
-                output = subprocess.check_output([cmd], shell=True)
-                print output
-                break
-            except:
-                pass
+            # Ask for confirmation
+            print("LP: #%s %s %s -> %s-proposed" % (bugno, packageset, version, series))
+            if not self.ask("Accept into proposed? "):
+                return
 
-            print("Waiting for %s %s %s to be published" % ( base_package, series, version ))
+            # Copy everything over at once
+            set_has_signed=False
+            for package in packages:
+                output = None
+                cmd = ["copy-proposed-kernel", series, package]
+                print("Calling: " + ' '.join(cmd))
+                subprocess.Popen(cmd)
 
-        print("%s %s %s is published!" % ( base_package, series, version ))
+                if "signed" in package:
+                    set_has_signed=True
 
-        print("Now re-try the signed build, and accept the new binary.")
+            # Process UEFI stuff
+            if set_has_signed:
+                upload=None
+                while True:
+                    # Wait some time for UEFI binary to become available
+                    upload = distroseries.getPackageUploads(status="Unapproved", \
+                        name="%s_%s_amd64.tar.gz" % (base_package, version), exact_match=True)
+                    if len(upload) > 1:
+                        print("Something when wrong, UEFI binary not unique.")
+                        exit(1)
+                    elif len(upload) == 1:
+                        break
 
-        """
-        # Copy in linux-signed
-        subprocess.Popen(["copy-proposed-kernel", series, "linux-signed"])
+                    print("Waiting for UEFI binary...")
+                    time.sleep(10)
 
-        # Wait and approve linux-signed new package
-        upload=None
-        while True:
-            # Wait some time for linux-signed to become available
-            time.sleep(30)
-            upload = distroseries.getPackageUploads(status="New",
-                name="linux-signed", version=version, exact_match=True)[0]
-            if upload:
-                break
-            print("Waiting for linux-signed new package...")
-        print("Accepted linux-signed new package!")
+                upload[0].acceptFromQueue()
+                print("Accepted UEFI binary!")
 
-        upload.acceptFromQueue()
-        """
+            print("Copied all packages")
 
+    def release(self, bugnos):
+        for bugno in bugnos:
+            (packageset, series, version) = self.extract_fields_from_bug(bugno)
 
-    def release(self, bugno):
-        (packageset, series, version) = self.extract_fields_from_bug(bugno)
+            # Check if security needs to be updated
+            security = True
+            if self.get_bug_state(bugno, "Security-signoff") == "Invalid":
+                security = False
 
-        # Check if security needs to be updated
-        security = True
-        if self.get_bug_state(bugno, "Security-signoff") == "Invalid":
-            security = False
+            # Ask for confirmation
+            print("LP: #%s %s %s -> %s-updates" % (bugno, packageset, version, series))
+            if not self.ask("Release into updates? "):
+                return
 
-        # Ask for confirmation
-        print("LP: #%s %s %s -> %s-updates" % (bugno, packageset, version, series))
-        if not self.ask("Release into updates? "):
-            return
+            # Assign to updates/security if necessary
+            self.set_bug_state(bugno, "In Progress", "updates")
+            if security:
+                self.set_bug_state(bugno, "In Progress", "security")
 
-        # Assign to updates/security if necessary
-        self.set_bug_state(bugno, "In Progress", "updates")
-        if security:
-            self.set_bug_state(bugno, "In Progress", "security")
-
-        # Release the kernel!
-        packages = self.package_map[series][packageset]
-        cmd = ["sru-release", "--no-bugs", "--security", series]
-        cmd.extend(packages)
-        print(" ".join(cmd))
-        subprocess.Popen(cmd)
-
-    def finish(self, bugno, pocket="updates"):
-
-        # Determine information.
-        (packageset, series, version) = self.extract_fields_from_bug(bugno)
-
-        # TODO: Check if any packages are not published
-
-        # Get status
-        status = ""
-        packages = ' '.join(self.package_map[series][packageset])
-        cmd = "rmadison -a source %s | grep %s-%s" % ( packages, series, pocket)
-        try:
-            status = subprocess.check_output([cmd], shell=True).rstrip("\n\r")
-        except:
-            print("Error getting status")
-            exit(1)
-
-        text = "Promoted to %s:\n%s" % (pocket.capitalize(), status)
-        print text
-
-        # Look good?
-        if self.ask("Does this look correct? "):
-            # Set bug states to Fix Released
-            if pocket == "updates":
-                self.set_bug_state(bugno, "Fix Released", "updates")
-                self.set_bug_state(bugno, "Fix Released", "security")
+            # Release the kernel!
+            packages = self.package_map[series][packageset]
+            if security:
+                cmd = ["sru-release", "--no-bugs", "--security", series]
             else:
-                self.set_bug_state(bugno, "Fix Released", "proposed")
+                cmd = ["sru-release", "--no-bugs", series]
 
-            # Set bug message
-            self.add_bug_message(bugno, "Promoted to " + pocket.capitalize(), status)
+            cmd.extend(packages)
+            print(" ".join(cmd))
+            subprocess.Popen(cmd)
 
-        # Print output message
-        wording = "released" if pocket == "updates" else "promoted"
-        print("* LP: #%s - %s %s %s to %s-%s" % (bugno, wording, packageset, version, series, pocket))
+    def finish(self, bugnos, pocket="updates"):
+        for bugno in bugnos:
+            # Determine information.
+            (packageset, series, version) = self.extract_fields_from_bug(bugno)
+
+            # TODO: Check if any packages are not published
+
+            # Get status
+            status = ""
+            packages = ' '.join(self.package_map[series][packageset])
+            cmd = "rmadison -a source %s | grep %s-%s" % ( packages, series, pocket)
+            try:
+                status = subprocess.check_output([cmd], shell=True).rstrip("\n\r")
+            except:
+                print("Error getting status")
+                exit(1)
+
+            text = "Promoted to %s:\n%s" % (pocket.capitalize(), status)
+            print text
+
+            # Look good?
+            if self.ask("Does this look correct? "):
+                # Set bug states to Fix Released
+                if pocket == "updates":
+                    self.set_bug_state(bugno, "Fix Released", "updates")
+                    self.set_bug_state(bugno, "Fix Released", "security")
+                else:
+                    self.set_bug_state(bugno, "Fix Released", "proposed")
+
+                # Set bug message
+                self.add_bug_message(bugno, "Promoted to " + pocket.capitalize(), status)
+
+            # Print output message
+            wording = "released" if pocket == "updates" else "promoted"
+            print("* LP: #%s - %s %s %s to %s-%s" % (bugno, wording, packageset, version, series, pocket))
 
     def list_ppa_packages(self, series, packageset, version):
         distroseries = self.ubuntu.getSeries(name_or_version=series)
@@ -351,6 +316,7 @@ class ReviewSRUKernel:
         return (packageset, series, version)
 
     def list_sru_workflow(self, review=False):
+        bugnos = []
         workflow_tasks = self.workflow.searchTasks()
         for task in workflow_tasks:
             for subtask in task.related_tasks:
@@ -358,6 +324,7 @@ class ReviewSRUKernel:
                   if subtask.status == 'Confirmed' or subtask.status == 'In Progress':
 
                       bugno = str(subtask.bug.id)
+                      bugnos.append(bugno)
                       status = str(subtask.status)
                       title = str(subtask.title)
                       task_type = str(title.split(' ')[6]).replace(':','').replace('"','').replace('promote-to-','->')
@@ -392,6 +359,8 @@ class ReviewSRUKernel:
                                       diff = self.get_diff(package, version, series)
                                       r.display_diff(diff)
 
+        print("Listed bugs: " + ' '.join(list(set(bugnos))))
+
 
     def sanity_check(self):
         print("sanity check")
@@ -413,11 +382,11 @@ def parse():
     review_parser = subparsers.add_parser('review')
     list_parser = subparsers.add_parser('list')
     promote_parser = subparsers.add_parser('promote')
-    promote_parser.add_argument("bug_number")
+    promote_parser.add_argument("bug_numbers", nargs='+', type=int)
     release_parser = subparsers.add_parser('release')
-    release_parser.add_argument("bug_number")
+    release_parser.add_argument("bug_numbers", nargs='+', type=int)
     finish_parser = subparsers.add_parser('finish')
-    finish_parser.add_argument("bug_number")
+    finish_parser.add_argument("bug_numbers", nargs='+', type=int)
     finish_parser.add_argument("pocket", default="proposed")
     status_parser = subparsers.add_parser('status')
     status_parser.add_argument("pocket", default="proposed")
@@ -431,16 +400,16 @@ if __name__ == "__main__":
         r.list_sru_workflow(review=True)
     elif args.command == "promote":
         r = ReviewSRUKernel(args)
-        r.promote_kernel_set(args.bug_number)
+        r.promote_kernel_set(args.bug_numbers)
     elif args.command == "status":
         r = ReviewSRUKernel(args)
         r.status(args.pocket)
     elif args.command == "release":
         r = ReviewSRUKernel(args)
-        r.release(args.bug_number)
+        r.release(args.bug_numbers)
     elif args.command == "finish":
         r = ReviewSRUKernel(args)
-        r.finish(args.bug_number, args.pocket)
+        r.finish(args.bug_numbers, args.pocket)
     elif args.command == "list":
         r = ReviewSRUKernel(args)
         r.list_sru_workflow()
