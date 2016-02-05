@@ -359,7 +359,8 @@ class ReviewSRUKernel:
                                       diff = self.get_diff(package, version, series)
                                       r.display_diff(diff)
 
-        print("Listed bugs: " + ' '.join(list(set(bugnos))))
+        if bugnos:
+            print("Listed bugs: " + ' '.join(list(set(bugnos))))
 
 
     def sanity_check(self):
