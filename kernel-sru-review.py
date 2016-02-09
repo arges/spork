@@ -32,6 +32,8 @@ class ReviewSRUKernel:
                                   "linux-signed-lts-vivid" ],
             "linux-lts-wily" : [ "linux-lts-wily", "linux-meta-lts-wily",
                                   "linux-signed-lts-wily" ],
+            "linux-lts-xenial" : [ "linux-lts-xenial", "linux-meta-lts-xenial",
+                                  "linux-signed-lts-xenial" ],
          },
          "vivid" : {
             "linux": [ "linux", "linux-meta", "linux-signed" ],
