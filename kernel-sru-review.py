@@ -41,7 +41,10 @@ class ReviewSRUKernel:
          "wily" : {
             "linux": [ "linux", "linux-meta", "linux-signed" ],
             "linux-raspi2": [ "linux-raspi2", "linux-meta-raspi2" ],
-         }
+         },
+         "xenial" : {
+            "linux": [ "linux", "linux-meta", "linux-signed" ],
+         },
     }
 
     def __init__(self, args):
