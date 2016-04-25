@@ -265,12 +265,12 @@ class ReviewSRUKernel:
 
             # Look good?
             if self.ask("Does this look correct? "):
-                # Set bug states to Fix Released
+                # Set bug states to Fix Committed
                 if pocket == "updates":
-                    self.set_bug_state(bugno, "Fix Released", "updates")
-                    self.set_bug_state(bugno, "Fix Released", "security")
+                    self.set_bug_state(bugno, "Fix Committed", "updates")
+                    self.set_bug_state(bugno, "Fix Committed", "security")
                 else:
-                    self.set_bug_state(bugno, "Fix Released", "proposed")
+                    self.set_bug_state(bugno, "Fix Committed", "proposed")
 
                 # Set bug message
                 self.add_bug_message(bugno, "Promoted to " + pocket.capitalize(), status)
