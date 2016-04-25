@@ -216,11 +216,11 @@ class ReviewSRUKernel:
 
             # Check if security needs to be updated
             security = True
-            if self.get_bug_state(bugno, "Security-signoff") == "Invalid":
+            if self.get_bug_state(bugno, "security-signoff") == "Invalid":
                 security = False
 
             # Ask for confirmation
-            print("LP: #%s %s %s -> %s-updates" % (bugno, packageset, version, series))
+            print("LP: #%s %s %s -> %s-updates security=%s" % (bugno, packageset, version, series, security))
             if not self.ask("Release into updates? "):
                 return
 
