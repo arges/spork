@@ -44,6 +44,8 @@ class ReviewSRUKernel:
          },
          "xenial" : {
             "linux": [ "linux", "linux-meta", "linux-signed" ],
+            "linux-raspi2": [ "linux-raspi2", "linux-meta-raspi2" ],
+            "linux-snapdragon": [ "linux-snapdragon", "linux-meta-snapdragon" ],
          },
     }
 
